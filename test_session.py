@@ -19,6 +19,9 @@ class SessionTests(TestCase):
         self.addCleanup(self.temp.cleanup)
         self.events = Queue()
         self.session = self.module.MeetingSession([], "vi", self.events, Path(self.temp.name))
+        self.audio_mock = patch.object(self.module.pyaudio, "PyAudio", return_value=MagicMock())
+        self.audio_mock.start()
+        self.addCleanup(self.audio_mock.stop)
 
     def drain(self):
         result = []
@@ -71,9 +74,10 @@ class SessionTests(TestCase):
         stream.get_read_available.return_value = 0
         stream.read.side_effect = AssertionError("read would block without available audio")
         manager = MagicMock()
-        manager.open.return_value.__enter__.return_value = stream
+        manager.open.return_value = stream
         manager.__enter__.return_value = manager
         device = {"defaultSampleRate": 16000, "maxInputChannels": 1, "index": 1}
+        self.session.manager = manager
         with patch.object(self.module.pyaudio, "PyAudio", return_value=manager):
             capture = Thread(target=self.session._capture, args=("Meeting", device))
             capture.start()
@@ -83,6 +87,27 @@ class SessionTests(TestCase):
             capture.join(1)
         self.assertFalse(capture.is_alive())
         stream.read.assert_not_called()
+        self.assertFalse(any(e[0] == "error" for e in self.drain()))
+
+    def test_capture_sources_share_one_audio_manager(self):
+        stream = MagicMock()
+        stream.get_read_available.return_value = 0
+        manager = MagicMock()
+        manager.open.return_value = stream
+        manager.__enter__.return_value = manager
+        device = {"defaultSampleRate": 16000, "maxInputChannels": 1, "index": 1}
+        self.session.devices = [("Meeting", device), ("You", device)]
+        with patch.object(self.module, "load_model", return_value=SimpleNamespace()), patch.object(self.module.pyaudio, "PyAudio", return_value=manager) as initialize:
+            self.session.start()
+            import time
+            deadline = time.monotonic() + 2
+            while manager.open.call_count < 2 and self.session.alive() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.session.stop()
+            self.session.thread.join(2)
+        self.assertFalse(self.session.alive())
+        self.assertEqual(manager.open.call_count, 2)
+        self.assertEqual(initialize.call_count, 1, "PortAudio must not initialize concurrently in capture threads")
         self.assertFalse(any(e[0] == "error" for e in self.drain()))
 
     def test_file_failure_is_reported_without_capture(self):

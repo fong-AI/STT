@@ -38,9 +38,19 @@ capturing meeting sound again through your microphone.
 Self-check uses generated silence and does not open a microphone or output capture.
 
 ## Verification on this machine
-- 15 automated tests passed: conversion, segmentation, shutdown, errors and real Tk UI with simulated sessions.
+- 16 automated tests passed: conversion, segmentation, shutdown, errors and real Tk UI with simulated sessions.
 - Actual Windows output devices enumerated, model downloaded into this folder, silent audio produced no transcript.
 - Windows-generated English speech: 8.96 seconds decoded in 2.14 seconds total on CPU (two chunks).
 - Actual default output loopback -> STT -> transcript file -> Stop passed with the generated speech.
 - No live Zoom/Meet session or real microphone capture tested. Vietnamese recognition quality has not been measured.
 - Independent review found no remaining important issue after cancellation/status fixes.
+
+## Start failure correction
+A native PortAudio assertion was observed after the initial handoff. Capture
+threads were each initializing a separate PyAudio manager concurrently. The
+session now owns one manager; stream open/close operations are serialized, and
+termination happens after every capture thread exits. A regression test and
+five actual loopback Start/Stop cycles passed with microphone disabled. Both
+available microphone formats were checked without opening microphone capture.
+The exact error text reported by the user has not yet been supplied; additional
+errors may need separate diagnosis.

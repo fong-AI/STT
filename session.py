@@ -2,7 +2,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from queue import Empty, Full, Queue
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 import time
 
 import numpy as np
@@ -40,6 +40,8 @@ class MeetingSession:
         self.failed = Event()
         self.thread = None
         self.captures = []
+        self.manager = None
+        self.audio_lock = Lock()
         self.started = 0
 
     def start(self):
@@ -71,34 +73,39 @@ class MeetingSession:
         channels = int(device["maxInputChannels"])
         frames = max(1, rate // 10)
         try:
-            with pyaudio.PyAudio() as manager:
-                while not self.stopped.is_set():
-                    if label == "You" and not self.mic_enabled.is_set():
-                        self.events.put(("level", label, 0.0))
-                        self.stopped.wait(0.1)
-                        continue
-                    buffer = AudioBuffer(rate)
-                    position = 0
-                    offset = time.monotonic() - self.started
-                    with manager.open(format=pyaudio.paFloat32, channels=channels, rate=rate,
-                                      input=True, input_device_index=int(device["index"]),
-                                      frames_per_buffer=frames) as stream:
-                        while not self.stopped.is_set():
-                            if label == "You" and not self.mic_enabled.is_set():
-                                break
-                            available = stream.get_read_available()
-                            if available <= 0:
-                                self.stopped.wait(0.02)
-                                continue
-                            raw = stream.read(min(frames, available), exception_on_overflow=True)
-                            samples = np.frombuffer(raw, dtype=np.float32).reshape(-1, channels).mean(axis=1)
-                            self.events.put(("level", label, float(np.sqrt(np.mean(samples ** 2)))))
-                            for chunk in buffer.add(samples):
-                                self._enqueue((label, offset + position / rate, to_16k(chunk, rate)))
-                                position += len(chunk)
-                        remainder = buffer.flush()
-                        if len(remainder):
-                            self._enqueue((label, offset + position / rate, to_16k(remainder, rate)))
+            manager = self.manager
+            while not self.stopped.is_set():
+                if label == "You" and not self.mic_enabled.is_set():
+                    self.events.put(("level", label, 0.0))
+                    self.stopped.wait(0.1)
+                    continue
+                buffer = AudioBuffer(rate)
+                position = 0
+                offset = time.monotonic() - self.started
+                with self.audio_lock:
+                    stream = manager.open(format=pyaudio.paFloat32, channels=channels, rate=rate,
+                                          input=True, input_device_index=int(device["index"]),
+                                          frames_per_buffer=frames)
+                try:
+                    while not self.stopped.is_set():
+                        if label == "You" and not self.mic_enabled.is_set():
+                            break
+                        available = stream.get_read_available()
+                        if available <= 0:
+                            self.stopped.wait(0.02)
+                            continue
+                        raw = stream.read(min(frames, available), exception_on_overflow=True)
+                        samples = np.frombuffer(raw, dtype=np.float32).reshape(-1, channels).mean(axis=1)
+                        self.events.put(("level", label, float(np.sqrt(np.mean(samples ** 2)))))
+                        for chunk in buffer.add(samples):
+                            self._enqueue((label, offset + position / rate, to_16k(chunk, rate)))
+                            position += len(chunk)
+                    remainder = buffer.flush()
+                    if len(remainder):
+                        self._enqueue((label, offset + position / rate, to_16k(remainder, rate)))
+                finally:
+                    with self.audio_lock:
+                        stream.close()
         except Exception as error:
             self._error(f"{label}: {error}")
 
@@ -115,6 +122,8 @@ class MeetingSession:
             output.write("Local meeting transcript\n" + datetime.now().isoformat(timespec="seconds") + "\n\n")
             self.events.put(("file", str(path)))
             self.started = time.monotonic()
+            # PortAudio initialization/termination must not race between capture threads.
+            self.manager = pyaudio.PyAudio()
             for label, device in self.devices:
                 if self.stopped.is_set():
                     break
@@ -149,6 +158,11 @@ class MeetingSession:
             self.stop()
             for thread in self.captures:
                 thread.join()
+            if self.manager is not None:
+                try:
+                    self.manager.terminate()
+                except Exception as error:
+                    self.events.put(("error", f"Could not close audio devices: {error}"))
             if output is not None:
                 try:
                     output.close()
