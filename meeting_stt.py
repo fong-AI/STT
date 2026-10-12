@@ -35,7 +35,7 @@ class App:
         self.closing = False
         self.has_error = False
         self.saved_path = None
-        self.window.title("Meeting STT - local transcription")
+        self.window.title("Meeting STT - PhoWhisper-small")
         self.window.geometry("940x700")
         self.window.minsize(720, 540)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
@@ -139,7 +139,7 @@ class App:
         self.stop_button["state"] = "normal"
         for control in (self.output, self.microphone, self.language, self.refresh):
             control["state"] = "disabled"
-        self.status.set("Loading local model...")
+        self.status.set("Loading PhoWhisper-small...")
         self.session.start()
 
     def stop(self):
@@ -217,7 +217,7 @@ def main():
         segments, _ = model.transcribe(np.zeros(16000 * 5, dtype=np.float32), language="vi", vad_filter=True)
         transcript = " ".join(segment.text for segment in segments).strip()
         assert not transcript, "Silence produced text"
-        print(f"PASS: local model loaded; silence produced no text ({time.monotonic() - start:.2f}s)")
+        print(f"PASS: PhoWhisper-small loaded; silence produced no text ({time.monotonic() - start:.2f}s)")
     else:
         window = tk.Tk()
         ttk.Style().theme_use("vista")

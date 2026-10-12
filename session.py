@@ -11,6 +11,7 @@ import pyaudiowpatch as pyaudio
 from audio_utils import AudioBuffer, to_16k
 
 ROOT = Path(__file__).resolve().parent
+MODEL_ID = "qbsmlabs/PhoWhisper-small"
 
 
 @lru_cache(maxsize=1)
@@ -20,10 +21,10 @@ def load_model():
     cache.mkdir(exist_ok=True)
     # Prefer local files so subsequent meetings do not require Internet access.
     try:
-        return WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=6,
+        return WhisperModel(MODEL_ID, device="cpu", compute_type="int8", cpu_threads=6,
                             download_root=str(cache), local_files_only=True)
     except (FileNotFoundError, OSError):
-        return WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=6,
+        return WhisperModel(MODEL_ID, device="cpu", compute_type="int8", cpu_threads=6,
                             download_root=str(cache))
 
 
@@ -112,14 +113,14 @@ class MeetingSession:
     def _run(self):
         output = None
         try:
-            self.events.put(("status", "Loading local model (first run may download it)..."))
+            self.events.put(("status", "Loading PhoWhisper-small (first run may download it)..."))
             model = load_model()
             if self.stopped.is_set():
                 return
             self.directory.mkdir(parents=True, exist_ok=True)
             path = self.directory / (datetime.now().strftime("meeting-%Y%m%d-%H%M%S-%f") + ".txt")
             output = path.open("x", encoding="utf-8", buffering=1)
-            output.write("Local meeting transcript\n" + datetime.now().isoformat(timespec="seconds") + "\n\n")
+            output.write("Local meeting transcript - PhoWhisper-small\n" + datetime.now().isoformat(timespec="seconds") + "\n\n")
             self.events.put(("file", str(path)))
             self.started = time.monotonic()
             # PortAudio initialization/termination must not race between capture threads.

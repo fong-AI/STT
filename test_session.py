@@ -29,6 +29,21 @@ class SessionTests(TestCase):
             result.append(self.events.get_nowait())
         return result
 
+    def test_model_loader_uses_phowhisper_from_local_cache(self):
+        with patch.object(self.module, "ROOT", Path(self.temp.name)), patch("faster_whisper.WhisperModel", return_value=SimpleNamespace()) as constructor:
+            self.module.load_model.__wrapped__()
+        self.assertEqual(constructor.call_count, 1)
+        args, kwargs = constructor.call_args
+        self.assertEqual(args[0], "qbsmlabs/PhoWhisper-small")
+        self.assertTrue(kwargs["local_files_only"])
+
+    def test_missing_cache_downloads_phowhisper_without_generic_fallback(self):
+        with patch.object(self.module, "ROOT", Path(self.temp.name)), patch("faster_whisper.WhisperModel", side_effect=[FileNotFoundError("not cached"), SimpleNamespace()]) as constructor:
+            self.module.load_model.__wrapped__()
+        self.assertEqual(constructor.call_count, 2)
+        self.assertTrue(all(call.args[0] == "qbsmlabs/PhoWhisper-small" for call in constructor.call_args_list))
+        self.assertNotIn("local_files_only", constructor.call_args.kwargs)
+
     def test_stop_during_model_load_never_opens_capture(self):
         entered, release = Event(), Event()
         def load():
