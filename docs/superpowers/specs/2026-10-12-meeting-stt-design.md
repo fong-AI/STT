@@ -1,7 +1,7 @@
 # Meeting STT local — thiết kế bản thử
 
 ## Mục tiêu
-Người dùng tham gia Google Meet hoặc Zoom như bình thường, mở công cụ bên cạnh để đọc transcript trong cuộc họp. STT chạy local, không có phí API theo phút. Codex xây dựng công cụ. Dự án riêng tại C:/Users/PHONG/meeting-stt, không sửa MMVN hoặc credential Google.
+Người dùng tham gia Google Meet hoặc Zoom như bình thường, mở công cụ bên cạnh để đọc transcript trong cuộc họp. STT chạy local, không có phí API theo phút. Codex xây dựng công cụ. Dự án riêng tại D:/py/meeting-stt, không sửa MMVN hoặc credential Google.
 
 ## Lựa chọn
 Chọn faster-whisper vì tích hợp Python đơn giản và hỗ trợ CPU INT8. whisper.cpp là lựa chọn thay thế nhưng cần tích hợp executable/binding. Cloud STT không đáp ứng mục tiêu không tính phí API.
