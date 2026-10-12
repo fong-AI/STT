@@ -194,7 +194,10 @@ class App:
                 self.partials[event[1]].set(f"{event[1]} (draft): {event[2]}" if event[2] else "")
             elif kind == "transcript":
                 self.text["state"] = "normal"
-                self.text.insert("end", event[1] + "\n")
+                if len(event) > 2 and event[2]:
+                    self.text.insert("end-2c", " " + event[1])
+                else:
+                    self.text.insert("end", event[1] + "\n")
                 self.text.see("end")
                 self.text["state"] = "disabled"
             elif kind == "error":

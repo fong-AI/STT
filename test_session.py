@@ -269,6 +269,22 @@ class SessionTests(TestCase):
         self.assertEqual(state["offset"], 4.5)
         model.transcribe.assert_not_called()
 
+    def test_transcript_groups_consecutive_chunks_and_starts_new_turn_on_source_change(self):
+        from io import StringIO
+        output = StringIO()
+        for label, seconds, text in (("You", 1, "alo alo"), ("You", 2, "1 2 3 4"),
+                                     ("Meeting", 4, "xin chao"), ("Meeting", 5, "ban"),
+                                     ("You", 7, "toi nghe ro")):
+            self.session._write_transcript(output, label, seconds, text)
+            self.assertIn(text, output.getvalue(), "Confirmed words must be written immediately")
+        self.assertEqual(output.getvalue().splitlines(), [
+            "[00:01] You: alo alo 1 2 3 4",
+            "[00:04] Meeting: xin chao ban",
+            "[00:07] You: toi nghe ro",
+        ])
+        events = [e for e in self.drain() if e[0] == "transcript"]
+        self.assertEqual([e[2] for e in events], [False, True, False, True, False])
+
 
 if __name__ == "__main__":
     main()

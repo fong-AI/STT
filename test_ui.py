@@ -126,5 +126,24 @@ class UITests(TestCase):
         self.assertTrue(self.app.closing)
         self.assertTrue(self.window.winfo_exists())
 
+    def test_same_turn_appends_to_line_and_source_change_starts_new_line(self):
+        for event in (("transcript", "[00:01] You: alo alo", False),
+                      ("transcript", "1 2 3 4", True),
+                      ("transcript", "[00:04] Meeting: xin chao", False),
+                      ("transcript", "ban", True),
+                      ("transcript", "[00:07] You: toi nghe ro", False)):
+            self.app.events.put(event)
+        self.app.poll()
+        self.assertEqual(self.app.text.get("1.0", "end").splitlines()[:3], [
+            "[00:01] You: alo alo 1 2 3 4",
+            "[00:04] Meeting: xin chao ban",
+            "[00:07] You: toi nghe ro",
+        ])
+        with patch.object(meeting_stt, "MeetingSession", FakeSession):
+            self.app.start()
+        self.app.events.put(("transcript", "[00:00] You: new session", False))
+        self.app.poll()
+        self.assertEqual(self.app.text.get("1.0", "end").strip(), "[00:00] You: new session")
+
 
 if __name__ == "__main__": main()

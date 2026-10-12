@@ -39,7 +39,7 @@ capturing meeting sound again through your microphone.
 Self-check uses generated silence and does not open a microphone or output capture.
 
 ## Verification on this machine
-- 47 automated tests passed: audio conversion, streaming reconciliation, microphone boundaries, bounded windows, shutdown, errors and real Tk UI with simulated sessions.
+- 49 automated tests passed: audio conversion, streaming reconciliation, microphone boundaries, bounded windows, shutdown, errors and real Tk UI with simulated sessions.
 - Actual Windows output devices enumerated, model downloaded into this folder, silent audio produced no transcript.
 - Previous generic Whisper-small baseline, Windows-generated English speech: 8.96 seconds decoded in 2.14 seconds total on CPU (two chunks).
 - Actual default output loopback -> STT -> transcript file -> Stop passed with the generated speech.
@@ -85,7 +85,7 @@ Meeting output contains remote participants; your own voice must come from the s
 Select the same microphone used in Zoom/Meet. You can toggle Include my microphone during a session; the You meter should move when you speak. To change the microphone device, Stop, choose Microphone, and Start. If the You meter remains flat with capture enabled, check the selected input, its mute/volume and Windows microphone access. If You moves but there is no text, check the draft captions, pause briefly and check the session error/status.
 
 ## Streaming captions
-Capture emits one second of audio per source. The worker uses the existing Silero VAD and PhoWhisper model, showing drafts separately for You and Meeting. A word prefix agreed on by two successive decodes is saved, with the newest word held back for context. A trailing pause of at least 0.5 seconds, Stop or microphone disable finalizes the remaining text. Drafts are never written to the transcript file.
+Capture emits one second of audio per source. The worker uses the existing Silero VAD and PhoWhisper model, showing drafts separately for You and Meeting. A word prefix agreed on by two successive decodes is saved, with the newest word held back for context. A trailing pause of at least 0.5 seconds, Stop or microphone disable finalizes the remaining text. Drafts are never written to the transcript file. Consecutive confirmed chunks from the same source append to one paragraph, with one timestamp at its start. A source change starts a new paragraph: You, then Meeting, then You. This grouping applies to both the screen and the saved file; even a short pause does not split a paragraph while the source stays the same. All remote participants share the Meeting source, so changes between remote voices are not detected.
 
 The recognition window is at most 12 seconds. Continuous speech uses 0.5 seconds of acoustic overlap and committed-word reconciliation to reduce duplicates. Timestamp drift and legitimate repeated words are covered by regression tests. If recognition falls behind, queued chunks are combined before the next preview; no raw samples are discarded. A full queue still produces a visible error rather than silently losing audio.
 

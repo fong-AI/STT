@@ -89,6 +89,7 @@ class MeetingSession:
         self.manager = None
         self.audio_lock = Lock()
         self.started = 0
+        self.last_speaker = None
 
     def start(self):
         if self.thread is not None:
@@ -224,7 +225,11 @@ class MeetingSession:
                     self.events.put(("error", f"Could not close audio devices: {error}"))
             if output is not None:
                 try:
-                    output.close()
+                    try:
+                        if self.last_speaker is not None:
+                            output.write("\n")
+                    finally:
+                        output.close()
                 except OSError as error:
                     self.events.put(("error", f"Could not finish transcript file: {error}"))
             self.events.put(("done",))
@@ -263,11 +268,7 @@ class MeetingSession:
                               segment.text.strip()))
         confirmed, draft = state["text"].update(words, final=final)
         if confirmed:
-            minutes, seconds = divmod(int(confirmed[0][0]), 60)
-            line = f"[{minutes:02d}:{seconds:02d}] {label}: " + " ".join(word[2] for word in confirmed)
-            output.write(line + "\n")
-            output.flush()
-            self.events.put(("transcript", line))
+            self._write_transcript(output, label, confirmed[0][0], " ".join(word[2] for word in confirmed))
         self.events.put(("partial", label, draft))
         self.events.put(("timing", time.monotonic() - began, len(samples) / 16000))
         if final:
@@ -278,3 +279,16 @@ class MeetingSession:
             state["text"].previous = []
             if final and not capped:
                 state["text"] = StableText()
+
+    def _write_transcript(self, output, label, seconds, text):
+        append = self.last_speaker == label
+        if append:
+            line = text
+            output.write(" " + text)
+        else:
+            minutes, seconds = divmod(int(seconds), 60)
+            line = f"[{minutes:02d}:{seconds:02d}] {label}: {text}"
+            output.write(("\n" if self.last_speaker is not None else "") + line)
+        output.flush()
+        self.last_speaker = label
+        self.events.put(("transcript", line, append))
