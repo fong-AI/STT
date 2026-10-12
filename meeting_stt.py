@@ -57,7 +57,7 @@ class App:
             control.grid(row=row, column=1, sticky="ew", pady=5)
         self.refresh = ttk.Button(settings, text="Refresh devices", command=self.refresh_devices)
         self.refresh.grid(row=0, column=2, padx=(10, 0))
-        self.use_mic = tk.BooleanVar(value=False)
+        self.use_mic = tk.BooleanVar(value=True)
         self.mic_toggle = ttk.Checkbutton(settings, text="Include my microphone", variable=self.use_mic, command=self.toggle_mic)
         self.mic_toggle.grid(row=1, column=2, padx=(10, 0))
         ttk.Label(frame, text="Choose the SAME output device as Zoom/Meet. Use headphones to avoid duplicate speech.").pack(anchor="w", pady=(12, 2))
@@ -98,6 +98,10 @@ class App:
                 self.output.current(0)
             if self.microphones:
                 self.microphone.current(0)
+                self.mic_toggle["state"] = "normal"
+            else:
+                self.use_mic.set(False)
+                self.mic_toggle["state"] = "disabled"
             self.start_button["state"] = "normal" if self.outputs else "disabled"
             if not self.outputs:
                 self.status.set("No output loopback device. Connect headphones/speakers and refresh devices.")
@@ -105,6 +109,8 @@ class App:
                 self.status.set("Ready. Nothing is being recorded.")
         except Exception as error:
             self.outputs, self.microphones = [], []
+            self.use_mic.set(False)
+            self.mic_toggle["state"] = "disabled"
             self.start_button["state"] = "disabled"
             self.status.set("Cannot list audio devices: " + str(error))
 

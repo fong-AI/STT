@@ -7,14 +7,14 @@ No cloud STT, API key, account or per-minute STT charges. Python 3.12+.
 1. Open run.bat in this folder. Dependencies are installed in .venv.
 2. Set Meeting audio output to the same headphones/speakers used by Zoom/Meet.
 3. Select Vietnamese (recommended). English and Auto detect remain available, but this model is tuned for Vietnamese.
-4. Optionally select your microphone and tick Include my microphone.
+4. Your microphone is enabled by default when a microphone is available. Select the same microphone as Zoom/Meet, or untick Include my microphone to capture meeting output only.
 5. Choose Model: PhoWhisper-small (default, about 1 GB) or PhoWhisper-medium (about 3 GB), then click Start. Both models are already cached on this machine.
 6. Speak/listen; text arrives after audio chunks of up to 5 seconds plus processing time.
 7. Click Stop and wait for pending audio to finish. Transcripts are saved in transcripts/.
 
 Use setup.bat to install dependencies and download the model on a fresh machine.
 After the model is cached in models/, inference runs offline. The microphone is
-not captured until enabled. You can toggle it during a session. Microphone mute
+only captured after Start when Include my microphone is enabled. You can toggle it during a session. Microphone mute
 in Zoom/Meet DOES NOT mute this app. Loopback includes all sound played through
 the selected device, including other apps/notifications. Use headphones to avoid
 capturing meeting sound again through your microphone.
@@ -38,7 +38,7 @@ capturing meeting sound again through your microphone.
 Self-check uses generated silence and does not open a microphone or output capture.
 
 ## Verification on this machine
-- 33 automated tests passed: conversion, segmentation, shutdown, errors and real Tk UI with simulated sessions.
+- 35 automated tests passed: conversion, segmentation, shutdown, errors and real Tk UI with simulated sessions.
 - Actual Windows output devices enumerated, model downloaded into this folder, silent audio produced no transcript.
 - Previous generic Whisper-small baseline, Windows-generated English speech: 8.96 seconds decoded in 2.14 seconds total on CPU (two chunks).
 - Actual default output loopback -> STT -> transcript file -> Stop passed with the generated speech.
@@ -77,3 +77,8 @@ On another Windows PC, install Python 3.12+ and a current NVIDIA driver compatib
 The app checks actual GPU inference before opening capture streams, since a VAD silence check alone would not exercise CUDA. GPU recognition uses beam search with width 5; the CPU path retains width 1. Recognition still uses 5-second audio chunks, so GPU acceleration reduces processing time but does not provide word-by-word streaming.
 
 RTX 3060 verification: the same 6.61-second Vietnamese sample took 0.58 seconds with Small and 1.05 seconds with Medium (GPU INT8/FP16, beam 5), versus the earlier CPU results of 2.55 and 7.58 seconds (CPU INT8, beam 1). The settings differ, so this is an app throughput comparison, not an isolated hardware speedup or accuracy score. Report: models/pho-gpu-comparison.json. CUDA Toolkit environment variables/paths were removed for the final check; loaded cuBLAS DLLs came from .venv. Other physical GPUs and a live meeting have not been tested.
+
+## Your voice is missing
+Meeting output contains remote participants; your own voice must come from the separate microphone source. Include my microphone is now enabled by default when the app starts with a microphone available. Recording still begins only at Start. If there is no microphone, the checkbox is disabled and meeting output can still be transcribed.
+
+Select the same microphone used in Zoom/Meet. You can toggle Include my microphone during a session; the You meter should move when you speak. To change the microphone device, Stop, choose Microphone, and Start. If the You meter remains flat with capture enabled, check the selected input, its mute/volume and Windows microphone access. If You moves but there is no text, wait for a 5-second chunk and check the session error/status.

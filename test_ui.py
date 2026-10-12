@@ -10,6 +10,7 @@ class FakeSession:
     def __init__(self, *args, **kwargs):
         self.stopped = Event()
         self.mic_enabled = Event()
+        self.mic_enabled.set()
         self.running = False
     def start(self): self.running = True
     def stop(self): self.stopped.set()
@@ -71,6 +72,32 @@ class UITests(TestCase):
         self.app.poll()
         self.assertIn("GPU CUDA", self.app.backend.get())
         self.assertIn("0.3s", self.app.status.get())
+
+    def test_available_microphone_is_enabled_by_default_and_can_be_muted(self):
+        window = tk.Tk()
+        window.withdraw()
+        self.addCleanup(window.destroy)
+        microphone = {"index": 2, "name": "Test microphone"}
+        with patch.object(meeting_stt, "devices", return_value=([self.device], [microphone])):
+            app = meeting_stt.App(window)
+        self.assertTrue(app.use_mic.get())
+        with patch.object(meeting_stt, "MeetingSession", side_effect=FakeSession) as constructor:
+            app.start()
+        self.assertIn(("You", microphone), constructor.call_args.args[0])
+        self.assertTrue(app.session.mic_enabled.is_set())
+        app.use_mic.set(False)
+        app.toggle_mic()
+        self.assertFalse(app.session.mic_enabled.is_set())
+        app.use_mic.set(True)
+        app.toggle_mic()
+        self.assertTrue(app.session.mic_enabled.is_set())
+
+    def test_no_microphone_does_not_block_meeting_audio(self):
+        self.assertFalse(self.app.use_mic.get())
+        self.assertEqual(str(self.app.mic_toggle["state"]), "disabled")
+        with patch.object(meeting_stt, "MeetingSession", side_effect=FakeSession) as constructor:
+            self.app.start()
+        self.assertEqual(constructor.call_args.args[0], [("Meeting", self.device)])
 
     def test_no_devices_disables_start(self):
         with patch.object(meeting_stt, "devices", return_value=([], [])):
