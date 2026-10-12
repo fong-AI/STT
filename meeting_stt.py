@@ -6,7 +6,7 @@ from tkinter.scrolledtext import ScrolledText
 
 import pyaudiowpatch as pyaudio
 
-from session import MeetingSession, MODELS, ROOT, load_model
+from session import MeetingSession, MODELS, ROOT, backend_description, load_model
 
 
 LANGUAGES = {"Vietnamese": "vi", "English": "en", "Auto detect": None}
@@ -70,6 +70,8 @@ class App:
         self.stop_button.pack(side="left", padx=8)
         self.status = tk.StringVar(value="Ready. Nothing is being recorded.")
         ttk.Label(frame, textvariable=self.status, wraplength=880).pack(anchor="w", pady=(12, 4))
+        self.backend = tk.StringVar(value="Processing device is detected automatically at Start.")
+        ttk.Label(frame, textvariable=self.backend, wraplength=880).pack(anchor="w", pady=(0, 6))
         levels = ttk.Frame(frame)
         levels.pack(fill="x", pady=(0, 10))
         self.meters = {}
@@ -130,6 +132,7 @@ class App:
             selected.append(("You", self.microphones[mic_index]))
         self.has_error = False
         self.saved_path = None
+        self.backend.set("Detecting GPU and loading model...")
         self.saved.set("No transcript file yet; waiting for the local model.")
         self.session = MeetingSession(selected, LANGUAGES[self.language.get()], self.events, ROOT / "transcripts", model_name=self.model.get())
         if not self.use_mic.get():
@@ -167,6 +170,8 @@ class App:
             kind = event[0]
             if kind == "status" and not self.has_error and not (self.session and self.session.stopped.is_set()):
                 self.status.set(event[1])
+            elif kind == "backend":
+                self.backend.set(event[1])
             elif kind == "level":
                 self.meters[event[1]]["value"] = min(100, event[2] * 500)
             elif kind == "file":
@@ -220,7 +225,7 @@ def main():
         segments, _ = model.transcribe(np.zeros(16000 * 5, dtype=np.float32), language="vi", vad_filter=True)
         transcript = " ".join(segment.text for segment in segments).strip()
         assert not transcript, "Silence produced text"
-        print(f"PASS: {args.model} loaded; silence produced no text ({time.monotonic() - start:.2f}s)")
+        print(f"PASS: {args.model} on {backend_description(model)}; silence produced no text ({time.monotonic() - start:.2f}s)")
     else:
         window = tk.Tk()
         ttk.Style().theme_use("vista")

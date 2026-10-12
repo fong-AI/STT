@@ -4,6 +4,8 @@ from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
 import time
+import os
+import sysconfig
 
 import numpy as np
 import pyaudiowpatch as pyaudio
@@ -15,19 +17,55 @@ MODELS = {name: "qbsmlabs/" + name for name in ("PhoWhisper-small", "PhoWhisper-
 
 
 @lru_cache(maxsize=1)
+def configure_cuda_runtime():
+    if os.name == "nt":
+        library = Path(sysconfig.get_path("purelib")) / "nvidia" / "cublas" / "bin"
+        if library.is_dir():
+            os.environ["PATH"] = str(library) + os.pathsep + os.environ.get("PATH", "")
+            return os.add_dll_directory(str(library))
+
+
+def inference_device():
+    configure_cuda_runtime()
+    import ctranslate2
+    if ctranslate2.get_cuda_device_count() == 0:
+        return "cpu", "int8"
+    supported = ctranslate2.get_supported_compute_types("cuda")
+    return "cuda", next((kind for kind in ("int8_float16", "float16", "float32") if kind in supported), "float32")
+
+
+def backend_description(model):
+    device = model.model.device
+    label = "GPU CUDA" if device == "cuda" else "CPU (no CUDA-capable NVIDIA GPU detected)"
+    return f"{label} / {model.model.compute_type}"
+
+
+@lru_cache(maxsize=1)
 def load_model(model_name="PhoWhisper-small"):
     if model_name not in MODELS:
         raise ValueError(f"Unsupported model: {model_name}")
     from faster_whisper import WhisperModel
+    device, compute_type = inference_device()
     cache = ROOT / "models"
     cache.mkdir(exist_ok=True)
-    # Prefer local files so subsequent meetings do not require Internet access.
     try:
-        return WhisperModel(MODELS[model_name], device="cpu", compute_type="int8", cpu_threads=6,
-                            download_root=str(cache), local_files_only=True)
-    except (FileNotFoundError, OSError):
-        return WhisperModel(MODELS[model_name], device="cpu", compute_type="int8", cpu_threads=6,
-                            download_root=str(cache))
+        # Prefer local files so subsequent meetings do not require Internet access.
+        try:
+            model = WhisperModel(MODELS[model_name], device=device, compute_type=compute_type, cpu_threads=6,
+                                 download_root=str(cache), local_files_only=True)
+        except (FileNotFoundError, OSError):
+            model = WhisperModel(MODELS[model_name], device=device, compute_type=compute_type, cpu_threads=6,
+                                 download_root=str(cache))
+        if device == "cuda":
+            # Force CUDA inference before recording; VAD would skip the silent probe.
+            segments, _ = model.transcribe(np.zeros(16000, dtype=np.float32), language="vi", beam_size=1,
+                                          vad_filter=False, condition_on_previous_text=False, max_new_tokens=1)
+            list(segments)
+        return model
+    except (RuntimeError, OSError) as error:
+        if device == "cuda":
+            raise RuntimeError(f"GPU CUDA could not start: {error}. Check the NVIDIA driver and CUDA runtime; run setup.bat after updating them. CPU fallback is disabled when a CUDA GPU is detected.") from error
+        raise
 
 
 class MeetingSession:
@@ -122,10 +160,12 @@ class MeetingSession:
             model = load_model(self.model_name)
             if self.stopped.is_set():
                 return
+            backend = backend_description(model)
+            self.events.put(("backend", backend))
             self.directory.mkdir(parents=True, exist_ok=True)
             path = self.directory / (datetime.now().strftime("meeting-%Y%m%d-%H%M%S-%f") + ".txt")
             output = path.open("x", encoding="utf-8", buffering=1)
-            output.write(f"Local meeting transcript - {self.model_name}\n" + datetime.now().isoformat(timespec="seconds") + "\n\n")
+            output.write(f"Local meeting transcript - {self.model_name}\nBackend: {backend}\n" + datetime.now().isoformat(timespec="seconds") + "\n\n")
             self.events.put(("file", str(path)))
             self.started = time.monotonic()
             # PortAudio initialization/termination must not race between capture threads.
@@ -144,7 +184,8 @@ class MeetingSession:
                     continue
                 began = time.monotonic()
                 # shortcut: independent 5-second chunks can split words, add overlap with stable-text reconciliation if this limits accuracy.
-                segments, _ = model.transcribe(samples, language=self.language, beam_size=1,
+                segments, _ = model.transcribe(samples, language=self.language,
+                                               beam_size=5 if model.model.device == "cuda" else 1,
                                                vad_filter=True, condition_on_previous_text=False,
                                                vad_parameters={"min_silence_duration_ms": 400})
                 for segment in segments:

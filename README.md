@@ -20,7 +20,7 @@ the selected device, including other apps/notifications. Use headphones to avoid
 capturing meeting sound again through your microphone.
 
 ## Limits
-- CPU INT8 PhoWhisper-small or PhoWhisper-medium; RTX 3060 is not used in this first version.
+- Automatic NVIDIA CUDA GPU detection on each machine; CPU INT8 is used only when no CUDA GPU is detected. AMD/Intel GPU acceleration is not supported by this build.
 - Chunk boundaries can split words. Text is segment-based, not word-by-word live captions.
 - Labels are You and Meeting; no identification of individual meeting participants.
 - Device changes require Stop, Refresh devices and Start.
@@ -38,7 +38,7 @@ capturing meeting sound again through your microphone.
 Self-check uses generated silence and does not open a microphone or output capture.
 
 ## Verification on this machine
-- 22 automated tests passed: conversion, segmentation, shutdown, errors and real Tk UI with simulated sessions.
+- 33 automated tests passed: conversion, segmentation, shutdown, errors and real Tk UI with simulated sessions.
 - Actual Windows output devices enumerated, model downloaded into this folder, silent audio produced no transcript.
 - Previous generic Whisper-small baseline, Windows-generated English speech: 8.96 seconds decoded in 2.14 seconds total on CPU (two chunks).
 - Actual default output loopback -> STT -> transcript file -> Stop passed with the generated speech.
@@ -68,3 +68,12 @@ Both models passed silence checks and recognized the same public Vietnamese samp
 
 To verify Medium without recording devices:
 .venv\Scripts\python.exe meeting_stt.py --self-check --model PhoWhisper-medium
+
+## Automatic GPU use
+At Start, the app detects CUDA devices with CTranslate2 and uses the first NVIDIA GPU. It selects a compute type supported by that GPU: INT8/FP16 first, then FP16 or FP32. There is no hardcoded RTX model name, drive, CUDA Toolkit path or GPU configuration. Machines without a detected CUDA GPU run on CPU INT8. The processing device stays visible below the status line and is written to the transcript header.
+
+On another Windows PC, install Python 3.12+ and a current NVIDIA driver compatible with CUDA 12.8, then run setup.bat. Setup installs the pinned CTranslate2 engine and, when CUDA is detected, cuBLAS into that PC's .venv. The app locates the DLL directory from its current Python environment; a separate CUDA Toolkit installation is not needed for this pinned Windows build. Model weights are cached/downloaded in the project folder. A missing driver, runtime error or insufficient GPU memory is reported; a detected GPU does not silently fall back to CPU. Close an old app window and reopen run.bat after updating the code.
+
+The app checks actual GPU inference before opening capture streams, since a VAD silence check alone would not exercise CUDA. GPU recognition uses beam search with width 5; the CPU path retains width 1. Recognition still uses 5-second audio chunks, so GPU acceleration reduces processing time but does not provide word-by-word streaming.
+
+RTX 3060 verification: the same 6.61-second Vietnamese sample took 0.58 seconds with Small and 1.05 seconds with Medium (GPU INT8/FP16, beam 5), versus the earlier CPU results of 2.55 and 7.58 seconds (CPU INT8, beam 1). The settings differ, so this is an app throughput comparison, not an isolated hardware speedup or accuracy score. Report: models/pho-gpu-comparison.json. CUDA Toolkit environment variables/paths were removed for the final check; loaded cuBLAS DLLs came from .venv. Other physical GPUs and a live meeting have not been tested.

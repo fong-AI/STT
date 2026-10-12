@@ -63,6 +63,15 @@ class UITests(TestCase):
         self.app.poll()
         self.assertEqual(str(self.app.model["state"]), "readonly")
 
+    def test_backend_remains_visible_when_timing_status_updates(self):
+        with patch.object(meeting_stt, "MeetingSession", FakeSession):
+            self.app.start()
+        self.app.events.put(("backend", "GPU CUDA / float16"))
+        self.app.events.put(("timing", 0.3, 5.0))
+        self.app.poll()
+        self.assertIn("GPU CUDA", self.app.backend.get())
+        self.assertIn("0.3s", self.app.status.get())
+
     def test_no_devices_disables_start(self):
         with patch.object(meeting_stt, "devices", return_value=([], [])):
             self.app.refresh_devices()
