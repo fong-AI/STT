@@ -44,9 +44,30 @@ class SessionTests(TestCase):
         self.assertTrue(all(call.args[0] == "qbsmlabs/PhoWhisper-small" for call in constructor.call_args_list))
         self.assertNotIn("local_files_only", constructor.call_args.kwargs)
 
+    def test_medium_loader_uses_selected_repo(self):
+        with patch.object(self.module, "ROOT", Path(self.temp.name)), patch("faster_whisper.WhisperModel", return_value=SimpleNamespace()) as constructor:
+            self.module.load_model.__wrapped__("PhoWhisper-medium")
+        self.assertEqual(constructor.call_args.args[0], "qbsmlabs/PhoWhisper-medium")
+
+    def test_unknown_model_rejected_before_loading(self):
+        with patch("faster_whisper.WhisperModel") as constructor:
+            with self.assertRaises(ValueError):
+                self.module.load_model.__wrapped__("unknown")
+        constructor.assert_not_called()
+
+    def test_medium_session_uses_selected_model_and_labels_transcript(self):
+        session = self.module.MeetingSession([], "vi", self.events, Path(self.temp.name), model_name="PhoWhisper-medium")
+        with patch.object(self.module, "load_model", return_value=SimpleNamespace()) as load:
+            session.start()
+            session.thread.join(3)
+        load.assert_called_once_with("PhoWhisper-medium")
+        files = list(Path(self.temp.name).glob("*.txt"))
+        self.assertEqual(len(files), 1)
+        self.assertIn("PhoWhisper-medium", files[0].read_text(encoding="utf-8"))
+
     def test_stop_during_model_load_never_opens_capture(self):
         entered, release = Event(), Event()
-        def load():
+        def load(*args):
             entered.set()
             release.wait(3)
             return SimpleNamespace()

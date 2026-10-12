@@ -6,7 +6,7 @@ from tkinter.scrolledtext import ScrolledText
 
 import pyaudiowpatch as pyaudio
 
-from session import MeetingSession, ROOT, load_model
+from session import MeetingSession, MODELS, ROOT, load_model
 
 
 LANGUAGES = {"Vietnamese": "vi", "English": "en", "Auto detect": None}
@@ -35,7 +35,7 @@ class App:
         self.closing = False
         self.has_error = False
         self.saved_path = None
-        self.window.title("Meeting STT - PhoWhisper-small")
+        self.window.title("Meeting STT - PhoWhisper")
         self.window.geometry("940x700")
         self.window.minsize(720, 540)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
@@ -50,7 +50,9 @@ class App:
         self.microphone = ttk.Combobox(settings, state="readonly")
         self.language = ttk.Combobox(settings, state="readonly", values=list(LANGUAGES))
         self.language.set("Vietnamese")
-        for row, (label, control) in enumerate((("Meeting audio output", self.output), ("Microphone", self.microphone), ("Language", self.language))):
+        self.model = ttk.Combobox(settings, state="readonly", values=list(MODELS))
+        self.model.set("PhoWhisper-small")
+        for row, (label, control) in enumerate((("Meeting audio output", self.output), ("Microphone", self.microphone), ("Language", self.language), ("Model", self.model))):
             ttk.Label(settings, text=label).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=5)
             control.grid(row=row, column=1, sticky="ew", pady=5)
         self.refresh = ttk.Button(settings, text="Refresh devices", command=self.refresh_devices)
@@ -129,7 +131,7 @@ class App:
         self.has_error = False
         self.saved_path = None
         self.saved.set("No transcript file yet; waiting for the local model.")
-        self.session = MeetingSession(selected, LANGUAGES[self.language.get()], self.events, ROOT / "transcripts")
+        self.session = MeetingSession(selected, LANGUAGES[self.language.get()], self.events, ROOT / "transcripts", model_name=self.model.get())
         if not self.use_mic.get():
             self.session.mic_enabled.clear()
         self.text["state"] = "normal"
@@ -137,9 +139,9 @@ class App:
         self.text["state"] = "disabled"
         self.start_button["state"] = "disabled"
         self.stop_button["state"] = "normal"
-        for control in (self.output, self.microphone, self.language, self.refresh):
+        for control in (self.output, self.microphone, self.language, self.model, self.refresh):
             control["state"] = "disabled"
-        self.status.set("Loading PhoWhisper-small...")
+        self.status.set(f"Loading {self.model.get()}...")
         self.session.start()
 
     def stop(self):
@@ -183,7 +185,7 @@ class App:
                 self.status.set(f"Listening | last {event[2]:.1f}s audio processed in {event[1]:.1f}s")
         if self.session and self.session.stopped.is_set() and not self.session.alive():
             self.session = None
-            for control in (self.output, self.microphone, self.language):
+            for control in (self.output, self.microphone, self.language, self.model):
                 control["state"] = "readonly"
             self.refresh["state"] = "normal"
             self.start_button["state"] = "normal" if self.outputs else "disabled"
@@ -202,6 +204,7 @@ def main():
     parser = argparse.ArgumentParser(description="Local Zoom/Meet transcription")
     parser.add_argument("--list-devices", action="store_true")
     parser.add_argument("--self-check", action="store_true", help="Load model and transcribe silence; never records devices")
+    parser.add_argument("--model", choices=list(MODELS), default="PhoWhisper-small", help="Model used by self-check or initially selected in the app")
     args = parser.parse_args()
     if args.list_devices:
         outputs, microphones = devices()
@@ -212,16 +215,17 @@ def main():
     elif args.self_check:
         import time
         import numpy as np
-        model = load_model()
+        model = load_model(args.model)
         start = time.monotonic()
         segments, _ = model.transcribe(np.zeros(16000 * 5, dtype=np.float32), language="vi", vad_filter=True)
         transcript = " ".join(segment.text for segment in segments).strip()
         assert not transcript, "Silence produced text"
-        print(f"PASS: PhoWhisper-small loaded; silence produced no text ({time.monotonic() - start:.2f}s)")
+        print(f"PASS: {args.model} loaded; silence produced no text ({time.monotonic() - start:.2f}s)")
     else:
         window = tk.Tk()
         ttk.Style().theme_use("vista")
-        App(window)
+        app = App(window)
+        app.model.set(args.model)
         window.mainloop()
 
 

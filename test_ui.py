@@ -7,7 +7,7 @@ import meeting_stt
 
 
 class FakeSession:
-    def __init__(self, *args):
+    def __init__(self, *args, **kwargs):
         self.stopped = Event()
         self.mic_enabled = Event()
         self.running = False
@@ -50,6 +50,18 @@ class UITests(TestCase):
         self.app.session.running = False
         self.app.poll()
         self.assertIn("Transcript saved", self.app.status.get())
+
+    def test_model_selection_is_passed_and_locked_during_capture(self):
+        self.assertEqual(self.app.model.get(), "PhoWhisper-small")
+        self.app.model.set("PhoWhisper-medium")
+        with patch.object(meeting_stt, "MeetingSession", side_effect=FakeSession) as constructor:
+            self.app.start()
+        self.assertEqual(constructor.call_args.kwargs["model_name"], "PhoWhisper-medium")
+        self.assertEqual(str(self.app.model["state"]), "disabled")
+        self.app.stop()
+        self.app.session.running = False
+        self.app.poll()
+        self.assertEqual(str(self.app.model["state"]), "readonly")
 
     def test_no_devices_disables_start(self):
         with patch.object(meeting_stt, "devices", return_value=([], [])):
