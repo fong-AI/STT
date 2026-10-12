@@ -10,7 +10,7 @@ import sysconfig
 import numpy as np
 import pyaudiowpatch as pyaudio
 
-from audio_utils import AudioBuffer, to_16k
+from audio_utils import SpeechBuffer, to_16k
 
 ROOT = Path(__file__).resolve().parent
 MODELS = {name: "qbsmlabs/" + name for name in ("PhoWhisper-small", "PhoWhisper-medium")}
@@ -123,7 +123,7 @@ class MeetingSession:
                     self.events.put(("level", label, 0.0))
                     self.stopped.wait(0.1)
                     continue
-                buffer = AudioBuffer(rate)
+                buffer = SpeechBuffer(rate)
                 position = 0
                 offset = time.monotonic() - self.started
                 with self.audio_lock:
@@ -183,7 +183,7 @@ class MeetingSession:
                 except Empty:
                     continue
                 began = time.monotonic()
-                # shortcut: independent 5-second chunks can split words, add overlap with stable-text reconciliation if this limits accuracy.
+                # shortcut: uninterrupted speech is still split at 10 seconds, add overlap with text reconciliation if boundary errors persist.
                 segments, _ = model.transcribe(samples, language=self.language,
                                                beam_size=5 if model.model.device == "cuda" else 1,
                                                vad_filter=True, condition_on_previous_text=False,

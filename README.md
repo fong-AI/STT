@@ -9,7 +9,7 @@ No cloud STT, API key, account or per-minute STT charges. Python 3.12+.
 3. Select Vietnamese (recommended). English and Auto detect remain available, but this model is tuned for Vietnamese.
 4. Your microphone is enabled by default when a microphone is available. Select the same microphone as Zoom/Meet, or untick Include my microphone to capture meeting output only.
 5. Choose Model: PhoWhisper-small (default, about 1 GB) or PhoWhisper-medium (about 3 GB), then click Start. Both models are already cached on this machine.
-6. Speak/listen; text arrives after audio chunks of up to 5 seconds plus processing time.
+6. Speak/listen; text arrives after audio segments of about 5-10 seconds plus processing time. The app waits for a pause when possible.
 7. Click Stop and wait for pending audio to finish. Transcripts are saved in transcripts/.
 
 Use setup.bat to install dependencies and download the model on a fresh machine.
@@ -21,7 +21,7 @@ capturing meeting sound again through your microphone.
 
 ## Limits
 - Automatic NVIDIA CUDA GPU detection on each machine; CPU INT8 is used only when no CUDA GPU is detected. AMD/Intel GPU acceleration is not supported by this build.
-- Chunk boundaries can split words. Text is segment-based, not word-by-word live captions.
+- The app prefers a speech pause after 5 seconds and caps continuous speech at 10 seconds. A forced boundary can still split words; text is segment-based, not word-by-word live captions.
 - Labels are You and Meeting; no identification of individual meeting participants.
 - Device changes require Stop, Refresh devices and Start.
 - A full audio queue or device/file/model error stops capture and shows a visible error.
@@ -38,7 +38,7 @@ capturing meeting sound again through your microphone.
 Self-check uses generated silence and does not open a microphone or output capture.
 
 ## Verification on this machine
-- 35 automated tests passed: conversion, segmentation, shutdown, errors and real Tk UI with simulated sessions.
+- 38 automated tests passed: conversion, segmentation, shutdown, errors and real Tk UI with simulated sessions.
 - Actual Windows output devices enumerated, model downloaded into this folder, silent audio produced no transcript.
 - Previous generic Whisper-small baseline, Windows-generated English speech: 8.96 seconds decoded in 2.14 seconds total on CPU (two chunks).
 - Actual default output loopback -> STT -> transcript file -> Stop passed with the generated speech.
@@ -74,11 +74,16 @@ At Start, the app detects CUDA devices with CTranslate2 and uses the first NVIDI
 
 On another Windows PC, install Python 3.12+ and a current NVIDIA driver compatible with CUDA 12.8, then run setup.bat. Setup installs the pinned CTranslate2 engine and, when CUDA is detected, cuBLAS into that PC's .venv. The app locates the DLL directory from its current Python environment; a separate CUDA Toolkit installation is not needed for this pinned Windows build. Model weights are cached/downloaded in the project folder. A missing driver, runtime error or insufficient GPU memory is reported; a detected GPU does not silently fall back to CPU. Close an old app window and reopen run.bat after updating the code.
 
-The app checks actual GPU inference before opening capture streams, since a VAD silence check alone would not exercise CUDA. GPU recognition uses beam search with width 5; the CPU path retains width 1. Recognition still uses 5-second audio chunks, so GPU acceleration reduces processing time but does not provide word-by-word streaming.
+The app checks actual GPU inference before opening capture streams, since a VAD silence check alone would not exercise CUDA. GPU recognition uses beam search with width 5; the CPU path retains width 1. Recognition uses pause-aware audio segments of about 5-10 seconds, so GPU acceleration reduces processing time but does not provide word-by-word streaming.
 
 RTX 3060 verification: the same 6.61-second Vietnamese sample took 0.58 seconds with Small and 1.05 seconds with Medium (GPU INT8/FP16, beam 5), versus the earlier CPU results of 2.55 and 7.58 seconds (CPU INT8, beam 1). The settings differ, so this is an app throughput comparison, not an isolated hardware speedup or accuracy score. Report: models/pho-gpu-comparison.json. CUDA Toolkit environment variables/paths were removed for the final check; loaded cuBLAS DLLs came from .venv. Other physical GPUs and a live meeting have not been tested.
 
 ## Your voice is missing
 Meeting output contains remote participants; your own voice must come from the separate microphone source. Include my microphone is now enabled by default when the app starts with a microphone available. Recording still begins only at Start. If there is no microphone, the checkbox is disabled and meeting output can still be transcribed.
 
-Select the same microphone used in Zoom/Meet. You can toggle Include my microphone during a session; the You meter should move when you speak. To change the microphone device, Stop, choose Microphone, and Start. If the You meter remains flat with capture enabled, check the selected input, its mute/volume and Windows microphone access. If You moves but there is no text, wait for a 5-second chunk and check the session error/status.
+Select the same microphone used in Zoom/Meet. You can toggle Include my microphone during a session; the You meter should move when you speak. To change the microphone device, Stop, choose Microphone, and Start. If the You meter remains flat with capture enabled, check the selected input, its mute/volume and Windows microphone access. If You moves but there is no text, wait for a pause or the 10-second cap and check the session error/status.
+
+## Recognition at sentence boundaries
+Fixed 5-second cuts reproduced a duplicated word on the public Vietnamese sample: the output ended one segment with "Viet Nam" and began the next with "Nam". The same audio recognized as one sentence did not duplicate that boundary word. Capture now uses the installed Silero VAD to look for a trailing speech pause after 5 seconds, checking every half second. All audio samples, including pauses, are preserved; continuous speech is capped at 10 seconds. Stop and microphone disable still flush the remainder.
+
+The public 6.61-second sample plus one second of silence was kept in one 7.5-second segment and decoded by Medium on GPU in 0.64 seconds. Samples were checked for exact chronological preservation. Report: models/pho-pause-comparison.json. This fixes a demonstrated segmentation artifact, not a measured accuracy guarantee for the user's microphone. Uninterrupted speech can still be cut at the cap; background noise, pronunciation and terminology can still cause errors. Use Vietnamese and compare Small/Medium on the same spoken material. No extra model or package was installed for this change.

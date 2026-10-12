@@ -1,6 +1,7 @@
 import importlib
 import importlib.util
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -32,6 +33,32 @@ class AudioTests(unittest.TestCase):
         np.testing.assert_array_equal(chunks[1], np.arange(10, 20))
         np.testing.assert_array_equal(buffer.flush(), np.arange(20, 25))
         self.assertEqual(len(buffer.flush()), 0)
+
+    def test_speech_buffer_waits_for_pause_instead_of_cutting_at_five_seconds(self):
+        buffer = self.audio.SpeechBuffer(16000)
+        with patch("faster_whisper.vad.get_speech_timestamps", return_value=[{"start": 0, "end": 80000}]):
+            self.assertEqual(buffer.add(np.ones(80000, dtype=np.float32)), [])
+        with patch("faster_whisper.vad.get_speech_timestamps", return_value=[{"start": 0, "end": 80000}]):
+            chunks = buffer.add(np.zeros(8000, dtype=np.float32))
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(len(chunks[0]), 88000)
+        self.assertEqual(len(buffer.flush()), 0)
+
+    def test_speech_buffer_keeps_all_samples_and_bounds_continuous_speech(self):
+        buffer = self.audio.SpeechBuffer(16000)
+        samples = np.arange(350000, dtype=np.float32)
+        with patch("faster_whisper.vad.get_speech_timestamps", return_value=[{"start": 0, "end": 160000}]):
+            chunks = buffer.add(samples)
+        self.assertTrue(all(len(chunk) <= 160000 for chunk in chunks))
+        np.testing.assert_array_equal(np.concatenate(chunks + [buffer.flush()]), samples)
+
+    def test_speech_buffer_does_not_wait_forever_on_silence(self):
+        buffer = self.audio.SpeechBuffer(48000)
+        with patch("faster_whisper.vad.get_speech_timestamps", return_value=[]) as vad:
+            chunks = buffer.add(np.zeros(240000, dtype=np.float32))
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(len(chunks[0]), 240000)
+        self.assertEqual(len(vad.call_args.args[0]), 80000)
 
     def test_invalid_audio_and_rates_rejected(self):
         for samples, rate in [(np.array([np.nan]), 16000), (np.zeros(3), 0), (np.zeros((2, 2, 2)), 16000)]:

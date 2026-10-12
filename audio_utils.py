@@ -40,3 +40,24 @@ class AudioBuffer:
         remaining = self.pending
         self.pending = np.empty(0, dtype=np.float32)
         return remaining
+
+
+class SpeechBuffer(AudioBuffer):
+    def __init__(self, rate):
+        super().__init__(rate, seconds=10)
+        self.rate = rate
+        self.check_at = rate * 5
+
+    def add(self, samples):
+        chunks = super().add(samples)
+        if chunks:
+            self.check_at = self.rate * 5
+        if len(self.pending) >= self.check_at:
+            from faster_whisper.vad import get_speech_timestamps
+            self.check_at = len(self.pending) + self.rate // 2
+            audio = to_16k(self.pending, self.rate)
+            speech = get_speech_timestamps(audio, min_silence_duration_ms=400, speech_pad_ms=0)
+            if not speech or speech[-1]["end"] <= len(audio) - 6400:
+                chunks.append(self.flush())
+                self.check_at = self.rate * 5
+        return chunks
