@@ -80,6 +80,11 @@ class App:
             meter = ttk.Progressbar(levels, maximum=100, length=150)
             meter.pack(side="left", padx=(0, 20))
             self.meters[label] = meter
+        self.partials = {}
+        for label in ("Meeting", "You"):
+            self.partials[label] = tk.StringVar(value="")
+            ttk.Label(frame, textvariable=self.partials[label], wraplength=880,
+                      font=("Segoe UI", 10, "italic")).pack(anchor="w")
         self.text = ScrolledText(frame, wrap="word", font=("Segoe UI", 11), state="disabled")
         self.text.pack(fill="both", expand=True)
         self.saved = tk.StringVar(value="Transcripts are saved to " + str(ROOT / "transcripts"))
@@ -138,6 +143,8 @@ class App:
             selected.append(("You", self.microphones[mic_index]))
         self.has_error = False
         self.saved_path = None
+        for draft in self.partials.values():
+            draft.set("")
         self.backend.set("Detecting GPU and loading model...")
         self.saved.set("No transcript file yet; waiting for the local model.")
         self.session = MeetingSession(selected, LANGUAGES[self.language.get()], self.events, ROOT / "transcripts", model_name=self.model.get())
@@ -183,6 +190,8 @@ class App:
             elif kind == "file":
                 self.saved_path = event[1]
                 self.saved.set("Saved to: " + event[1])
+            elif kind == "partial":
+                self.partials[event[1]].set(f"{event[1]} (draft): {event[2]}" if event[2] else "")
             elif kind == "transcript":
                 self.text["state"] = "normal"
                 self.text.insert("end", event[1] + "\n")

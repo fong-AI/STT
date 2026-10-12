@@ -99,6 +99,19 @@ class UITests(TestCase):
             self.app.start()
         self.assertEqual(constructor.call_args.args[0], [("Meeting", self.device)])
 
+    def test_streaming_drafts_replace_previous_text_and_keep_sources_separate(self):
+        self.app.events.put(("partial", "You", "alo mot"))
+        self.app.events.put(("partial", "Meeting", "xin chao"))
+        self.app.events.put(("partial", "You", "alo hai"))
+        self.app.poll()
+        self.assertIn("alo hai", self.app.partials["You"].get())
+        self.assertNotIn("alo mot", self.app.partials["You"].get())
+        self.assertIn("xin chao", self.app.partials["Meeting"].get())
+        self.assertNotIn("alo hai", self.app.text.get("1.0", "end"))
+        self.app.events.put(("partial", "You", ""))
+        self.app.poll()
+        self.assertEqual(self.app.partials["You"].get(), "")
+
     def test_no_devices_disables_start(self):
         with patch.object(meeting_stt, "devices", return_value=([], [])):
             self.app.refresh_devices()

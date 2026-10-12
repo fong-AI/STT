@@ -17,6 +17,9 @@ class SessionTests(TestCase):
         self.module = importlib.import_module("session")
         self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        vad = patch.object(self.module, "get_speech_timestamps", side_effect=lambda audio, **kw: [{"start": 0, "end": len(audio)}])
+        vad.start()
+        self.addCleanup(vad.stop)
         self.events = Queue()
         self.session = self.module.MeetingSession([], "vi", self.events, Path(self.temp.name))
         self.device_mock = patch.object(self.module, "inference_device", return_value=("cpu", "int8"), create=True)
@@ -210,6 +213,61 @@ class SessionTests(TestCase):
             self.session.thread.join(3)
         self.assertFalse(self.session.alive())
         self.assertTrue(any(e[0] == "error" and "inference failed" in e[1] for e in self.drain()))
+
+    def test_mic_boundary_finishes_text_while_meeting_capture_continues(self):
+        session = self.module.MeetingSession([("You", {})], "vi", self.events, Path(self.temp.name))
+        calls = []
+        def transcribe(samples, **kwargs):
+            calls.append(samples.copy())
+            text = "mic" if samples[0] == 1 else "meeting"
+            return iter([SimpleNamespace(text=text, start=0, end=len(samples)/16000)]), None
+        model = SimpleNamespace(model=SimpleNamespace(device="cpu", compute_type="int8"), transcribe=transcribe)
+        def capture(*args):
+            session._enqueue(("You", 0, np.ones(16000, dtype=np.float32)))
+            session._enqueue(("You", 1, None))
+            session._enqueue(("Meeting", 0, np.full(16000, 2, dtype=np.float32)))
+            import time
+            deadline = time.monotonic() + 2
+            while len(calls) < 2 and time.monotonic() < deadline:
+                time.sleep(.01)
+            session.stop()
+        with patch.object(self.module, "load_model", return_value=model), patch.object(session, "_capture", side_effect=capture):
+            session.start()
+            session.thread.join(3)
+        events = self.drain()
+        lines = [e[1] for e in events if e[0] == "transcript"]
+        self.assertEqual(len(lines), 2)
+        self.assertIn("You: mic", lines[0])
+        self.assertIn("Meeting: meeting", lines[1])
+        self.assertFalse(any(e[0] == "error" for e in events))
+
+    def test_bounded_window_keeps_overlap_and_unprocessed_audio(self):
+        from io import StringIO
+        from streaming import StableText
+        samples = np.arange(16000 * 13, dtype=np.float32)
+        state = {"samples": samples.copy(), "offset": 4, "text": StableText()}
+        def segments():
+            yield SimpleNamespace(text="sentence", start=0, end=11.5)
+            raise AssertionError("Must not decode the short tail again")
+        transcribe = MagicMock(return_value=(segments(), None))
+        model = SimpleNamespace(model=SimpleNamespace(device="cpu", compute_type="int8"), transcribe=transcribe)
+        output = StringIO()
+        self.session._recognize(model, output, "You", state, final=True, capped=True)
+        self.assertEqual(len(transcribe.call_args.args[0]), 16000 * 12)
+        np.testing.assert_array_equal(state["samples"], samples[16000*12-8000:])
+        self.assertEqual(state["offset"], 15.5)
+        self.assertIn("You: sentence", output.getvalue())
+
+    def test_silence_does_not_decode_or_grow_the_window(self):
+        from io import StringIO
+        from streaming import StableText
+        model = SimpleNamespace(transcribe=MagicMock())
+        state = {"samples": np.zeros(16000*4, dtype=np.float32), "offset": 1, "text": StableText()}
+        with patch.object(self.module, "get_speech_timestamps", return_value=[]):
+            self.session._recognize(model, StringIO(), "Meeting", state)
+        self.assertEqual(len(state["samples"]), 8000)
+        self.assertEqual(state["offset"], 4.5)
+        model.transcribe.assert_not_called()
 
 
 if __name__ == "__main__":

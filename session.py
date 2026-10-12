@@ -10,7 +10,9 @@ import sysconfig
 import numpy as np
 import pyaudiowpatch as pyaudio
 
-from audio_utils import SpeechBuffer, to_16k
+from audio_utils import AudioBuffer, to_16k
+from faster_whisper.vad import get_speech_timestamps
+from streaming import StableText
 
 ROOT = Path(__file__).resolve().parent
 MODELS = {name: "qbsmlabs/" + name for name in ("PhoWhisper-small", "PhoWhisper-medium")}
@@ -123,7 +125,7 @@ class MeetingSession:
                     self.events.put(("level", label, 0.0))
                     self.stopped.wait(0.1)
                     continue
-                buffer = SpeechBuffer(rate)
+                buffer = AudioBuffer(rate, seconds=1)
                 position = 0
                 offset = time.monotonic() - self.started
                 with self.audio_lock:
@@ -147,6 +149,8 @@ class MeetingSession:
                     remainder = buffer.flush()
                     if len(remainder):
                         self._enqueue((label, offset + position / rate, to_16k(remainder, rate)))
+                        position += len(remainder)
+                    self._enqueue((label, offset + position / rate, None))
                 finally:
                     with self.audio_lock:
                         stream.close()
@@ -176,28 +180,36 @@ class MeetingSession:
                 thread = Thread(target=self._capture, args=(label, device), name=f"capture-{label}", daemon=True)
                 self.captures.append(thread)
                 thread.start()
-            self.events.put(("status", "Listening. Text updates after each short audio segment."))
+            self.events.put(("status", "Listening. Streaming drafts update about every second."))
+            states = {}
             while any(t.is_alive() for t in self.captures) or not self.audio.empty():
                 try:
-                    label, offset, samples = self.audio.get(timeout=0.1)
+                    batch = [self.audio.get(timeout=0.1)]
                 except Empty:
                     continue
-                began = time.monotonic()
-                # shortcut: uninterrupted speech is still split at 10 seconds, add overlap with text reconciliation if boundary errors persist.
-                segments, _ = model.transcribe(samples, language=self.language,
-                                               beam_size=5 if model.model.device == "cuda" else 1,
-                                               vad_filter=True, condition_on_previous_text=False,
-                                               vad_parameters={"min_silence_duration_ms": 400})
-                for segment in segments:
-                    text = segment.text.strip()
-                    if text:
-                        seconds = offset + segment.start
-                        minutes, seconds = divmod(int(seconds), 60)
-                        line = f"[{minutes:02d}:{seconds:02d}] {label}: {text}"
-                        output.write(line + "\n")
-                        output.flush()
-                        self.events.put(("transcript", line))
-                self.events.put(("timing", time.monotonic() - began, len(samples) / 16000))
+                # Coalesce previews when inference is slower than capture; keep every audio sample.
+                for _ in range(23):
+                    try:
+                        batch.append(self.audio.get_nowait())
+                    except Empty:
+                        break
+                dirty = set()
+                for label, offset, samples in batch:
+                    state = states.setdefault(label, {"samples": np.empty(0, dtype=np.float32),
+                                                      "offset": offset, "text": StableText()})
+                    if samples is None:
+                        self._recognize(model, output, label, state, final=True)
+                    else:
+                        if not len(state["samples"]):
+                            state["offset"] = offset
+                        state["samples"] = np.concatenate((state["samples"], samples))
+                        while len(state["samples"]) >= 16000 * 12:
+                            self._recognize(model, output, label, state, final=True, capped=True)
+                        dirty.add(label)
+                for label in dirty:
+                    self._recognize(model, output, label, states[label])
+            for label, state in states.items():
+                self._recognize(model, output, label, state, final=True)
         except Exception as error:
             self.failed.set()
             self._error(str(error))
@@ -216,3 +228,53 @@ class MeetingSession:
                 except OSError as error:
                     self.events.put(("error", f"Could not finish transcript file: {error}"))
             self.events.put(("done",))
+
+    def _recognize(self, model, output, label, state, final=False, capped=False):
+        samples = state["samples"][:16000 * 12] if capped else state["samples"]
+        if not len(samples):
+            return
+        speech = get_speech_timestamps(samples, min_silence_duration_ms=500, speech_pad_ms=0)
+        if not speech:
+            state["text"].previous = []
+            if final and not capped:
+                state["text"] = StableText()
+            self.events.put(("partial", label, ""))
+            keep = 0 if final else min(len(samples), 8000)
+            state["offset"] += (len(samples) - keep) / 16000
+            state["samples"] = state["samples"][len(samples) - keep:]
+            return
+        final = final or speech[-1]["end"] <= len(samples) - 8000
+        began = time.monotonic()
+        segments, _ = model.transcribe(samples, language=self.language,
+                                      beam_size=5 if model.model.device == "cuda" else 1,
+                                      temperature=0.0, word_timestamps=True, without_timestamps=True,
+                                      vad_filter=True, condition_on_previous_text=False,
+                                      vad_parameters={"min_silence_duration_ms": 500})
+        words = []
+        # The bounded window fits one Whisper decode; re-decoding its tiny tail hallucinates in PhoWhisper.
+        segment = next(iter(segments), None)
+        if segment is not None:
+            if getattr(segment, "words", None):
+                words.extend((state["offset"] + word.start, state["offset"] + word.end, word.word.strip())
+                             for word in segment.words if word.word.strip())
+            elif segment.text.strip():
+                words.append((state["offset"] + segment.start,
+                              state["offset"] + getattr(segment, "end", len(samples) / 16000),
+                              segment.text.strip()))
+        confirmed, draft = state["text"].update(words, final=final)
+        if confirmed:
+            minutes, seconds = divmod(int(confirmed[0][0]), 60)
+            line = f"[{minutes:02d}:{seconds:02d}] {label}: " + " ".join(word[2] for word in confirmed)
+            output.write(line + "\n")
+            output.flush()
+            self.events.put(("transcript", line))
+        self.events.put(("partial", label, draft))
+        self.events.put(("timing", time.monotonic() - began, len(samples) / 16000))
+        if final:
+            # shortcut: long continuous speech uses 0.5s overlap; use a native streaming model if boundary errors persist.
+            keep = 8000 if capped else 0
+            state["offset"] += (len(samples) - keep) / 16000
+            state["samples"] = state["samples"][len(samples) - keep:]
+            state["text"].previous = []
+            if final and not capped:
+                state["text"] = StableText()
